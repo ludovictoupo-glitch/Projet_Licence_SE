@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dobot Control Panel | Industrial OS</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <!-- Police Tech/Industrielle -->
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Roboto:wght@300;500&display=swap"
+        rel="stylesheet">
+
+    <style>
+        body {
+            /* Fond industriel sombre */
+            background: linear-gradient(rgba(0, 0, 0, 0.7), rgba(0, 0, 0, 0.7));
+            background-size: cover;
+            background-attachment: fixed;
+            font-family: 'Roboto', sans-serif;
+            color: #e0e0e0;
+            height: 100vh;
+        }
+
+        h1 {
+            font-family: 'Orbitron', sans-serif;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            color: #00d4ff;
+            text-shadow: 0 0 15px rgba(0, 212, 255, 0.5);
+            border-bottom: 2px solid #00d4ff;
+            display: inline-block;
+            padding-bottom: 10px;
+        }
+
+        /* Style des cartes en mode "Glassmorphism" */
+        .stat-card {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            padding: 25px;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.5);
+            border: 1px solid rgba(0, 212, 255, 0.3);
+        }
+
+        .stat-label {
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #aaa;
+            margin-bottom: 10px;
+        }
+
+        .stat-value {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 2.5rem;
+            font-weight: bold;
+        }
+
+        /* Couleurs industrielles spécifiques */
+        .color-total {
+            color: #00d4ff;
+        }
+
+        .color-red {
+            color: #ff4b5c;
+        }
+
+        .color-blue {
+            color: #3b82f6;
+        }
+
+        .color-green {
+            color: #10b981;
+        }
+
+        /* Bouton Style Industriel */
+        .btn-industrial {
+            background: transparent;
+            border: 2px solid #00d4ff;
+            color: #00d4ff;
+            font-family: 'Orbitron', sans-serif;
+            padding: 15px 40px;
+            font-size: 1.2rem;
+            position: relative;
+            overflow: hidden;
+            transition: all 0.3s;
+            clip-path: polygon(10% 0, 100% 0, 90% 100%, 0% 100%);
+            /* Look futuriste */
+        }
+
+        .btn-industrial:hover {
+            background: #00d4ff;
+            color: #000;
+            box-shadow: 0 0 20px rgba(0, 212, 255, 0.6);
+        }
+
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 8px;
+            background-color: #10b981;
+            /* Vert par défaut */
+            box-shadow: 0 0 10px #10b981;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.4;
+            }
+
+            100% {
+                opacity: 1;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container py-5">
+        <div class="d-flex justify-content-between align-items-center mb-5">
+            <h1>Industrial Control DOBOT</h1>
+            <div class="text-end">
+                <span class="status-indicator"></span>
+                <small style="color: #10b981;">SYSTEM ONLINE</small>
+            </div>
+        </div>
+
+        <div class="row g-4 mb-5">
+            <!-- TOTAL -->
+            <div class="col-md-3">
+                <div class="stat-card">
+                    <div class="stat-label">TRI Total</div>
+                    <div class="stat-value color-total" id="count-total">0</div>
+                </div>
+            </div>
+            <!-- ROUGE -->
+            <div class="col-md-3">
+                <div class="stat-card">
+                    <div class="stat-label">CUBE Rouges</div>
+                    <div class="stat-value color-red" id="count-rouge">0</div>
+                </div>
+            </div>
+            <!-- BLEU -->
+            <div class="col-md-3">
+                <div class="stat-card">
+                    <div class="stat-label">CUBE Bleus</div>
+                    <div class="stat-value color-blue" id="count-bleu">0</div>
+                </div>
+            </div>
+            <!-- VERT -->
+            <div class="col-md-3">
+                <div class="stat-card">
+                    <div class="stat-label">CUBE Verts</div>
+                    <div class="stat-value color-green" id="count-vert">0</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="text-center mt-5">
+            <button id="btnStart" class="btn btn-industrial"> DEMMARER LE TRI DOBOT </button>
+            <p class="mt-3 text-half muted small">ID: DOBOT-MAGIGIEN | PROJET LICENCE</p>
+        </div>
+    </div>
+
+    <script>
+        // Ta logique JS pour la connexion avec app.py
+        function updateDashboard() {
+            fetch('/get_stats')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('count-total').innerText = data.total;
+                    document.getElementById('count-rouge').innerText = data.rouge;
+                    document.getElementById('count-bleu').innerText = data.bleu;
+                    document.getElementById('count-vert').innerText = data.vert;
+                })
+                .catch(err => console.error("Erreur de liaison serveur: ", err));
+        }
+
+        document.getElementById('btnStart').addEventListener('click', function () {
+            this.innerText = "PROCESSING...";
+            fetch('/start_robot', { method: 'POST' })
+                .then(res => res.json())
+                .then(data => {
+                    alert(data.message);
+                    this.innerText = "INITIALIZE COMMAND";
+                });
+        });
+
+        setInterval(updateDashboard, 2000);
+        updateDashboard();
+    </script>
+</body>
+
+</html>
