@@ -14,17 +14,16 @@ couleur_queue = Queue(maxsize=5)
 stop_event = threading.Event()
 
 Positions = {
-    "prise": (213.3245, 5.2245, 1.6391, 1.4029),
-    "R": (19.3407, -196.8356, -49.1944, -84.3882),
-    "V": (71.6597, -204.0571, -49.544, -70.65),
-    "B": (47.9391, -130.6879, -47.5538, -69.8559),
+    "prise": (214.9984, -9.4423, 1.9855, -2.5147),
+    "R": (29.4894, -135.753, -51.8256, -77.7441),
+    "V": (154.0986, -159.3117, -49.4504, -45.9529),
+    "B": (73.6311, -227.6866, -50.0013, -72.0794),
     # Ajoute une vraie position jaune si nécessaire
     # "J": (...),
     "home": (200, 0, 50, 0),
 }
 
 Z_SAFE = 50
-Z_MIN = -50
 MAX_REACH = 300
 
 
@@ -52,55 +51,52 @@ def robot_ready(device):
 def in_reach(x, y):
     return math.sqrt(x**2 + y**2) <= MAX_REACH
 
+def check_position_reached(device, x, y, z, r, tolerance_xyz=15, tolerance_r=15):
+    cx, cy, cz, cr, j1, j2, j3, j4 = device.pose()
+    erreur_xyz = math.sqrt((cx - x)**2 + (cy - y)**2 + (cz - z)**2)
+    erreur_r = abs(cr - r)
+    log.info(f"Position demandée : x={x:.1f}, y={y:.1f}, z={z:.1f}, r={r:.1f}")
+    log.info(f"Position atteinte  : x={cx:.1f}, y={cy:.1f}, z={cz:.1f}, r={cr:.1f}")
+    log.info(f"Erreur XYZ={erreur_xyz:.1f} mm | Erreur R={erreur_r:.1f}°")
+    if erreur_xyz > tolerance_xyz:
+        return False
+    if erreur_r > tolerance_r:
+        return False
+    return True
+
+def wait_until_reached(device, x, y, z, r, timeout=10, tolerance_xyz=15, tolerance_r=15):
+    start = time.time()
+    while time.time() - start < timeout:
+        if check_position_reached(device, x, y, z, r, tolerance_xyz, tolerance_r):
+            return True
+        time.sleep(0.3)
+    return False
 
 def safe_move(device, x, y, z, r=0):
-    """Mouvement sécurisé inspiré du safe_move DobotDll. """
     if not robot_ready(device):
         raise RuntimeError("Robot non prêt")
-
     if not in_reach(x, y):
-        raise RuntimeError(
-            f"Position hors enveloppe: x={x:.1f}, y={y:.1f}")
-    # =========================
-    # POSITION ACTUELLE
-    # =========================
+        raise RuntimeError(f"Position hors enveloppe: x={x:.1f}, y={y:.1f}")
     pose = device.pose()
-    cx = pose[0]
-    cy = pose[1]
-    cz = pose[2]
-    cr = pose[3]
-    # =========================
-    # DETECTION ZONE RISQUEE
-    # =========================
+    cx, cy, cz, cr = pose[0], pose[1], pose[2], pose[3]
     risky = abs(y) > 120 or z < 40
-    # =========================
-    # PASSAGE INTERMEDIAIRE
-    # =========================
     if risky:
         log.info("Zone risquée → passage intermédiaire")
-        # Remontée verticale
         if cz < Z_SAFE:
-            device.move_to( cx, cy, Z_SAFE, cr, wait=True)
-            time.sleep(0.1)
-        # Passage centre Y=0
-        device.move_to( cx, 0, Z_SAFE, 0, wait=True )
-        time.sleep(0.1)
-    # =========================
-    # REMONTEE SI NECESSAIRE
-    # =========================
+            device.move_to(cx, cy, Z_SAFE, cr, wait=True)
+            time.sleep(0.5)
+        device.move_to(cx, 0, Z_SAFE, 0, wait=True)
+        time.sleep(0.5)
+        pose = device.pose()
+        cx, cy, cz, cr = pose[0], pose[1], pose[2], pose[3]
     if cz < Z_SAFE:
-        device.move_to( cx, cy, Z_SAFE, cr, wait=True)
-        time.sleep(0.1)
-    # =========================
-    # DEPLACEMENT HORIZONTAL
-    # =========================
-    device.move_to(x, y, Z_SAFE, cr, wait=True)
-    time.sleep(0.1)
-    # =========================
-    # DESCENTE
-    # =========================
-    device.move_to( x, y, z, r, wait=True)
-    time.sleep(0.1)
+        device.move_to(cx, cy, Z_SAFE, cr, wait=True)
+        time.sleep(0.5)
+    device.move_to(x, y, Z_SAFE, r, wait=True)
+    time.sleep(0.5)
+    device.move_to(x, y, z, r, wait=True)
+    if not wait_until_reached(device, x, y, z, r):
+        raise RuntimeError("Position finale non atteinte")
 
 def set_suction(device, enable: bool):
     try:
@@ -206,31 +202,16 @@ def init_robot_system(detecter_couleur_callback):
     log.info(f"XBee: {xbee_port}")
     device = Dobot(port=dobot_port)
     time.sleep(1)
-
     try:
         device._set_queued_cmd_clear()
-
-        device._set_ptp_joint_params(
-            50, 50, 50, 50,
-            50, 50, 50, 50
-        )
+        device._set_ptp_joint_params(50, 50, 50, 50, 50, 50, 50, 50)
     except Exception as e:
         log.warning(f"Impossible de régler les paramètres PTP: {e}")
-
     set_suction(device, False)
     device.speed(60, 60)
-
-    safe_move(device, *Positions["home"])
     do_homing(device)
-
-    threading.Thread(
-        target=listen_xbee,
-        args=(xbee_port, detecter_couleur_callback),
-        daemon=True
-    ).start()
-
+    threading.Thread(target=listen_xbee,args=(xbee_port, detecter_couleur_callback),daemon=True ).start()
     log.info("=== ROBOT SYSTEM READY ===")
-
     return device
 
 

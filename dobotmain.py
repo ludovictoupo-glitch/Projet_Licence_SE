@@ -29,6 +29,9 @@ try:
         except Empty:
             continue
 
+        except Exception as e:
+            log.error(f"Erreur dans la boucle principale: {e}")
+
 except KeyboardInterrupt:
     log.info("Arrêt demandé")
 
