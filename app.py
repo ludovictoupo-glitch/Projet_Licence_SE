@@ -1,4 +1,7 @@
 from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, request, redirect, url_for, jsonify
+from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
+from werkzeug.security import check_password_hash
 import os
 import socket 
 import subprocess  # Pour lancer le robot
@@ -15,7 +18,26 @@ system_active = False # Variable pour l'état du système
 
 app = Flask(__name__)
 
+app.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY', 'cle_de_secours_ultra_basique') # Indispensable pour sécuriser les sessions
+
+# CONFIGURATION STRICTE : Déconnexion dès qu'on ferme le navigateur
+app.config['REMEMBER_COOKIE_DURATION'] = 0
+app.config['SESSION_PERMANENT'] = False
+
+# Initialisation du gestionnaire de connexion
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login' # Redirige ici si l'accès est refusé
+
+# Configuration de ton compte unique d'entreprise
+ADMIN_SOCIETE = {
+    "id": "1",
+    "username": "dobot_admin",
+    "password_hash": "pbkdf2:sha256:260000$7z43U1776wqHrw2J$798ce1d07102fba94a30079318aa569508e01fe3a1ba0e09f9502bbc84321282"
+}
+
 DB_FILE = 'project_Dobot.db'
+
 
 # --- INITIALISATION DE LA BASE DE DONNÉES ---
 def init_db():
@@ -28,8 +50,9 @@ def init_db():
             count INTEGER DEFAULT 0
         )
     ''')
-    # Initialisation des compteurs à 0 pour nos 4 couleurs
+    # Initialisation des compteurs à 0 pour nos 4 couleurs + la ligne 'total' (si elle n'existe pas déjà)
     couleurs = ['jaune', 'bleu', 'rouge', 'vert']
+    cursor.execute("INSERT OR IGNORE INTO stats (color, count) VALUES ('total', 0)")
     for couleur in couleurs:
         cursor.execute("INSERT OR IGNORE INTO stats (color, count) VALUES (?, 0)", (couleur,))
     conn.commit()
@@ -78,17 +101,53 @@ def load_stats():
     
     # Structure attendue par l'IHM
     stats = {"total": 0, "rouge": 0, "vert": 0, "bleu": 0   , "jaune": 0}
-    total = 0
+    
     for color, count in rows:
         if color in stats:
             stats[color] = count
-            total += count
             
-    stats["total"] = total
     return stats
+
+class User(UserMixin):
+    def __init__(self, id, username):
+        self.id = id
+        self.username = username
+
+@login_manager.user_loader
+def load_user(user_id):
+    if user_id == ADMIN_SOCIETE["id"]:
+        return User(id=ADMIN_SOCIETE["id"], username=ADMIN_SOCIETE["username"])
+    return None
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if current_user.is_authenticated:
+        return redirect(url_for('index')) # Déjà connecté ? Go sur l'IHM
+        
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+        
+        # Vérification des identifiants uniques de l'entreprise
+        if username == ADMIN_SOCIETE["username"] and check_password_hash(ADMIN_SOCIETE["password_hash"], password):
+            user = User(id=ADMIN_SOCIETE["id"], username=ADMIN_SOCIETE["username"])
+            login_user(user) # Ouvre la session utilisateur
+            return redirect(url_for('index'))
+        else:
+            return "Identifiants invalides. <a href='/login'>Réessayer</a>", 401
+            
+    return render_template('login.html')
+
+@app.route('/logout')
+@login_required
+def logout():
+    logout_user() # Détruit le cookie de session
+    return redirect(url_for('login'))
 
 # --- 4. ROUTES FLASK ---
 @app.route('/')
+@login_required
 def index():
     return render_template('index.html')
 
@@ -105,24 +164,46 @@ def get_status():
 def update_tri():
     """Appelée par dobotmainihm.py après chaque cube déposé"""
     color = request.json.get('color', '').lower()
-    valides = ["rouge", "bleu", "vert", "jaune"]
-    
+    valides = ["rouge", "bleu", "vert", "jaune"] # On ne met que les vraies couleurs ici
+     # La ligne 'total' est gérée automatiquement, pas d'incrément manuel
     if color in valides:
         try:
+            # 1. On ouvre la connexion SQLite en PREMIER
             conn = sqlite3.connect(DB_FILE)
             cursor = conn.cursor()
+            
+            # 2. On incrémente la couleur reçue (ex: rouge + 1)
             cursor.execute("UPDATE stats SET count = count + 1 WHERE color = ?", (color,))
+            
+            # 3. AUTOMATISATION : On recalcule immédiatement la somme de tout le monde
+            cursor.execute("SELECT SUM(count) FROM stats WHERE color != 'total'")
+            total = cursor.fetchone()[0]
+            if total is None: 
+                total = 0
+                
+            # 4. On enregistre ce nouveau total directement dans la ligne 'total'
+            cursor.execute("UPDATE stats SET count = ? WHERE color = 'total'", (total,))
+            
+            # 5. On valide et on ferme proprement
             conn.commit()
             conn.close()
             
-            print(f" SQLite mis à jour : +1 {color}")
+            print(f" SQLite mis à jour : +1 {color} | Nouveau total = {total}")
+            
+            # On renvoie les stats à jour à l'IHM
             return jsonify(load_stats())
+            
         except Exception as e:
+            # En cas d'erreur, on s'assure de ne pas laisser la BDD verrouillée
+            try: conn.close()
+            except: pass
             return jsonify({"error": f"Erreur BDD : {str(e)}"}), 500
             
-    return jsonify({"error": "Couleur inconnue"}), 400
+    return jsonify({"error": f"Couleur '{color}' inconnue ou invalide"}), 400
+
 
 @app.route('/start_robot', methods=['POST'])
+@login_required
 def start_robot():
     global system_active
     system_active = True
@@ -137,6 +218,7 @@ def start_robot():
         return jsonify({"status": "Erreur", "message": "Le script robot ne répond pas sur le port 5001"}), 500
 
 @app.route('/stop_robot', methods=['POST'])
+@login_required
 def stop_robot():
     global system_active
     system_active = False
@@ -150,6 +232,7 @@ def stop_robot():
         return jsonify({"status": "Erreur", "message": "Impossible de joindre le robot pour l'arrêt"}), 500
 
 @app.route('/reset_stats', methods=['POST'])
+@login_required
 def reset_stats():
     try:
         conn = sqlite3.connect(DB_FILE)
