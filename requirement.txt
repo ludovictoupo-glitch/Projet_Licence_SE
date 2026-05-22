@@ -1,0 +1,8 @@
+Flask==3.0.2
+Flask-Login==0.6.3
+Werkzeug==3.0.1
+pyserial==3.5
+python==3.0.0
+picam==3.0
+opencv==3.0
+venv==2.0
