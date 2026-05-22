@@ -1,0 +1,20 @@
+# Exclure l'environnement virtuel (très lourd et inutile sur GitHub)
+venv/
+.venv/
+ENV/
+
+# Exclure les fichiers de cache Python
+__pycache__/
+*.pyc
+.pyo
+.pyd
+
+# Exclure la base de données SQLite locale (pour éviter d'écraser tes stats)
+.db
+.sqlite3
+project_Dobot.db
+
+# Exclure les fichiers de configuration système ou d'éditeurs
+.DS_Store
+.vscode/
+.idea/

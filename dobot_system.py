@@ -6,6 +6,29 @@ import math
 import serial
 import serial.tools.list_ports
 from pydobot import Dobot
+from pydobot.message import Message
+from gpiozero import LED
+import logging
+
+log = logging.getLogger(__name__)
+
+led1 = LED(16)
+led2 = LED(26)
+
+def allumer_eclairage():
+    led1.on()
+    led2.on()
+    log.info("Éclairage ON")
+
+def eteindre_eclairage():
+    led1.off()
+    led2.off()
+    log.info("Éclairage OFF")
+
+def fermer_eclairage():
+    eteindre_eclairage()
+    led1.close()
+    led.close()
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger()
@@ -14,14 +37,12 @@ couleur_queue = Queue(maxsize=5)
 stop_event = threading.Event()
 
 Positions = {
-    "prise": (214.9984, -9.4423, 1.9855, -2.5147),
-    "R": (29.4894, -135.753, -51.8256, -77.7441),
-    "V": (154.0986, -159.3117, -49.4504, -45.9529),
-    "B": (73.6311, -227.6866, -50.0013, -72.0794),
-    # Ajoute une vraie position jaune si nécessaire
-    # "J": (...),
-    "home": (200, 0, 50, 0),
-}
+    "prise": (219.3181, 3.8507, 0.5939, 1.0059),
+    "R": (52.522, -150.0039, -50.4858, -70.7029),
+    "V": (137.7465, -171.9357, -50.4809, -51.3),
+    "B": (92.1892, -225.5057, -49.5892, -67.7647),
+    "J": (92.1892, -225.5057, -49.5892, -67.7647),
+    "home": (200, 0, 50, 0),}
 
 Z_SAFE = 50
 MAX_REACH = 300
@@ -98,6 +119,30 @@ def safe_move(device, x, y, z, r=0):
     if not wait_until_reached(device, x, y, z, r):
         raise RuntimeError("Position finale non atteinte")
 
+def clear_alarms(device):
+    try:
+        log.warning("Effacement des alarmes Dobot")
+        # 1. Stopper / vider les anciennes commandes
+        device._set_queued_cmd_stop_exec()
+        time.sleep(0.2)
+        device._set_queued_cmd_clear()
+        time.sleep(0.2)
+        # 2. Envoyer ClearAlarmsState
+        msg = Message()
+        msg.id = 20
+        msg.ctrl = 0x01
+        msg.params = bytearray([])
+        device._send_command(msg)
+        time.sleep(1)
+        # 3. Redémarrer l'exécution des commandes
+        device._set_queued_cmd_start_exec()
+        time.sleep(0.5)
+        log.info("Commande clear alarm envoyée")
+        return True
+    except Exception as e:
+        log.error(f"Impossible d'effacer les alarmes: {e}")
+        return False
+
 def set_suction(device, enable: bool):
     try:
         device._set_end_effector_suction_cup(enable)
@@ -105,10 +150,8 @@ def set_suction(device, enable: bool):
     except Exception as e:
         log.error(f"Erreur commande ventouse: {e}")
 
-
 def listen_xbee(port, detecter_couleur_callback):
     ser = None
-
     try:
         while not stop_event.is_set():
             try:
@@ -120,9 +163,17 @@ def listen_xbee(port, detecter_couleur_callback):
                         msg = raw.decode(errors="ignore").strip()
                         log.info(f"Reçu XBee: '{msg}'")
                         if msg == "OBJET":
-                            log.info("OBJET reçu → capture caméra immédiate")
-                            couleur = detecter_couleur_callback()
-                            log.info(f"Couleur capturée: {couleur}")
+                            log.info("OBJET reçu allumage LED + capture caméra")
+                            couleur = "inconnue"
+                            try:
+                                allumer_eclairage()
+                                time.sleep(0.5)  # stabilisation lumière/caméra
+                                couleur = detecter_couleur_callback()
+                                log.info(f"Couleur capturée: {couleur}")
+                            except Exception as e:
+                                log.error(f"Erreur capture caméra avec éclairage: {e}")
+                            finally:
+                                eteindre_eclairage()
                             if couleur != "inconnue":
                                 try:
                                     couleur_queue.put_nowait(couleur)
@@ -141,11 +192,18 @@ def listen_xbee(port, detecter_couleur_callback):
     except Exception as e:
         log.error(f"Thread XBee arrêté: {e}")
 
-
 def do_homing(device):
-    log.info("=== HOMING LOGICIEL ===")
-    safe_move(device, *Positions["home"])
-    log.info("Homing terminé")
+    log.info("HOMING LOGICIEL")
+    clear_alarms(device)
+    x, y, z, r = device.pose()[:4]
+    log.info(f"Position avant test: x={x:.1f}, y={y:.1f}, z={z:.1f}, r={r:.1f}")
+    device.move_to(x, y, z + 10, r, wait=True)
+    time.sleep(1)
+    x2, y2, z2, r2 = device.pose()[:4]
+    log.info(f"Position après test: x={x2:.1f}, y={y2:.1f}, z={z2:.1f}, r={r2:.1f}")
+    if abs(z2 - z) < 5:
+        raise RuntimeError("Le Dobot ne bouge toujours pas après clear alarm")
+    log.info("Homing logiciel terminé")
 
 
 def couleur_to_position(couleur):
@@ -153,17 +211,12 @@ def couleur_to_position(couleur):
         "rouge": "R",
         "vert": "V",
         "bleu": "B",
-
-        # Temporaire : jaune envoyé vers V
-        # Remplace par "J" si tu ajoutes une position jaune.
-        "jaune": "V",
-    }
-
+        "jaune": "J",}
     return mapping.get(couleur)
 
 
 def cycle(device, couleur):
-    log.info("===== CYCLE DOBOT =====")
+    log.info("CYCLE DOBOT")
     log.info(f"Couleur reçue depuis la file: {couleur}")
     try:
         if not robot_ready(device):
@@ -188,11 +241,10 @@ def cycle(device, couleur):
             safe_move(device, *Positions["home"])
         except Exception as e:
             log.warning(f"Retour home impossible: {e}")
-        log.info("===== FIN CYCLE =====")
-
+        log.info("FIN CYCLE")
 
 def init_robot_system(detecter_couleur_callback):
-    log.info("=== INIT ROBOT SYSTEM ===")
+    log.info("INIT ROBOT SYSTEM")
     dobot_port, xbee_port = detect_ports()
     if not dobot_port:
         raise RuntimeError("Dobot introuvable")
@@ -202,28 +254,30 @@ def init_robot_system(detecter_couleur_callback):
     log.info(f"XBee: {xbee_port}")
     device = Dobot(port=dobot_port)
     time.sleep(1)
+    clear_alarms(device)
     try:
         device._set_queued_cmd_clear()
+        time.sleep(0.2)
+        device._set_queued_cmd_start_exec()
+        time.sleep(0.2)
         device._set_ptp_joint_params(50, 50, 50, 50, 50, 50, 50, 50)
     except Exception as e:
         log.warning(f"Impossible de régler les paramètres PTP: {e}")
     set_suction(device, False)
-    device.speed(60, 60)
+    device.speed(90, 90)
     do_homing(device)
     threading.Thread(target=listen_xbee,args=(xbee_port, detecter_couleur_callback),daemon=True ).start()
-    log.info("=== ROBOT SYSTEM READY ===")
+    log.info("ROBOT SYSTEM READY")
     return device
 
 
 def close_robot_system(device):
     stop_event.set()
-
     try:
         safe_move(device, *Positions["home"])
         set_suction(device, False)
     except Exception as e:
         log.warning(f"Erreur retour final home: {e}")
-
     try:
         device.close()
     except Exception as e:

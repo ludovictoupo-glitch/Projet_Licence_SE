@@ -33,13 +33,13 @@ login_manager.login_view = 'login' # Redirige ici si l'accès est refusé
 ADMIN_SOCIETE = {
     "id": "1",
     "username": "dobot_admin",
-    "password_hash": "pbkdf2:sha256:260000$7z43U1776wqHrw2J$798ce1d07102fba94a30079318aa569508e01fe3a1ba0e09f9502bbc84321282"
+    "password_hash": "pbkdf2:sha256:260000$7z43U1776wqHrw2J$798ce1d07102fba94a30079318aa569508e01fe3a1ba0e09f9502bbc84321282" # Hash de "motdepasse123"
 }
 
 DB_FILE = 'project_Dobot.db'
 
 
-# --- INITIALISATION DE LA BASE DE DONNÉES ---
+# INITIALISATION DE LA BASE DE DONNÉES SQLITE
 def init_db():
     """Crée la base de données et la table si elles n'existent pas"""
     conn = sqlite3.connect(DB_FILE)
@@ -61,7 +61,7 @@ def init_db():
 # On initialise la base SQLite au démarrage de l'application
 init_db()
 
-# --- 1. LANCEMENT AUTOMATIQUE DU ROBOT ---
+# LANCEMENT AUTOMATIQUE DU ROBOT COMME PROCESSUS SÉPARÉ 
 # On lance le robot comme un processus séparé
 robot_process = subprocess.Popen([sys.executable, "dobotmainihm.py"])
 print("Démarrage automatique du script Robot...")
@@ -76,7 +76,7 @@ def cleanup():
 
 atexit.register(cleanup)
 
-# --- 2. FONCTION DE COMMUNICATION ---
+# FONCTION DE COMMUNICATION SOCKET AVEC LE ROBOT
 def envoyer_signal_socket(message):
     """Envoie un message synchrone au serveur de commande du Dobot"""
     try:
@@ -90,7 +90,7 @@ def envoyer_signal_socket(message):
         logging.error(f"⚠️ Robot non prêt (Socket Error sur {message}): {e}")
         return False
 
-# --- 3. GESTION DES STATISTIQUES (SQLITE) ---
+#  GESTION DES STATISTIQUES (SQLITE) 
 def load_stats():
     """Lit les statistiques depuis SQLite et les formate en dictionnaire pour l'IHM"""
     conn = sqlite3.connect(DB_FILE)
@@ -145,7 +145,7 @@ def logout():
     logout_user() # Détruit le cookie de session
     return redirect(url_for('login'))
 
-# --- 4. ROUTES FLASK ---
+# ROUTES FLASK PRINCIPALES
 @app.route('/')
 @login_required
 def index():
@@ -230,19 +230,62 @@ def stop_robot():
         return jsonify({"status": "success", "message": "Signal STOP envoyé"})
     else:
         return jsonify({"status": "Erreur", "message": "Impossible de joindre le robot pour l'arrêt"}), 500
-
 @app.route('/reset_stats', methods=['POST'])
 @login_required
 def reset_stats():
     try:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
+        
+        # 1. ÉTAPE INDUSTRIELLE : Création automatique de la table d'archives si absente
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS donner_archives_tri (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date_archive TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                jaune INTEGER,
+                rouge INTEGER,
+                vert INTEGER,
+                bleu INTEGER,
+                total_tri INTEGER
+            )
+        ''')
+        
+        # 2. Récupération des valeurs courantes de la table stats pour archivage
+        cursor.execute("SELECT color, count FROM stats")
+        rows = cursor.fetchall()
+        actuel = {row[0]: row[1] for row in rows}
+        
+        # Sécurisation des variables pour éviter les erreurs de clés manquantes
+        j = actuel.get('jaune', 0)
+        r = actuel.get('rouge', 0)
+        v = actuel.get('vert', 0)
+        b = actuel.get('bleu', 0)
+        t = actuel.get('total', 0)
+        
+        # 3. ARCHIVAGE : Insertion des données de production dans l'historique
+        cursor.execute('''
+            INSERT INTO donner_archives_tri (jaune, rouge, vert, bleu, total_tri)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (j, r, v, b, t))
+        
+        # 4. REMISE À ZÉRO : Nettoyage de la table active pour la nouvelle session
         cursor.execute("UPDATE stats SET count = 0")
+        
+        # Validation définitive des écritures dans le fichier SQLite
         conn.commit()
         conn.close()
+        
+        print(" [INFO] Production archivée avec succès et compteurs réinitialisés à 0.")
+        
+        # Renvoie les nouvelles stats à 0 à ton interface HTML pour rafraîchir l'affichage
         return jsonify(load_stats())
+        
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        try:
+            conn.close()
+        except:
+            pass
+        return jsonify({"error": f"Erreur lors de l'archivage et de la réinitialisation : {str(e)}"}), 500
 
 if __name__ == '__main__':
     try:
