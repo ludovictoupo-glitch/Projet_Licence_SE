@@ -10,7 +10,7 @@ Le système est composé de trois blocs principaux qui communiquent en temps ré
 
 1. **Unité de Convoyage & Détection (Arduino Uno / Nano) :**
    * **Capteur infrarouge (IR) de position :** Détecte l'arrivée d'une pièce à l'entrée du tapis roulant.
-   * **Moteur pas-à-pas / CC :** Entraîne le convoyeur industriel.
+   * **Moteur pas-à-pas  :** Entraîne le convoyeur industriel.
    * **Module XBee (Émetteur) :** Envoie instantanément un signal sans fil dès qu'une pièce est positionnée et immobilisée, déclenchant le protocole de tri.
 
 2. **Unité de Tri Robotisée (Raspberry Pi 4 & Dobot Magician) :**
