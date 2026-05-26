@@ -8,7 +8,8 @@ __pycache__/
 *.pyc
 .pyo
 .pyd
-
+.sh
+ipfix.sh
 # Exclure la base de données SQLite locale (pour éviter d'écraser tes stats)
 .db
 .sqlite3
